@@ -1,4 +1,10 @@
+<p align="center">
+	<img src="assets/matsya.png" alt="Matsya logo" width="120">
+</p>
+
 # STM32 Adaptive Sonar Waveform Demo
+
+<p align="center"><strong>Built by Team Matsya</strong></p>
 
 **Platform:** STM32F446RE &nbsp;|&nbsp; **Toolchain:** STM32CubeIDE / STM32 HAL &nbsp;|&nbsp; **Language:** C
 
@@ -21,9 +27,11 @@ from two analog sensor inputs.
 - [Features](#features)
 - [Hardware](#hardware)
 - [Waveform behavior](#waveform-behavior)
+- [Mathematical model and firmware flow](#mathematical-model-and-firmware-flow)
 - [Build and flash](#build-and-flash)
 - [Project layout](#project-layout)
 - [Known limitations](#known-limitations)
+- [References](#references)
 
 ---
 
@@ -100,6 +108,156 @@ placeholder 20 dB loss bound. These are modeling assumptions, not calibrated
 measurements. The ADC inputs need sensors or signal conditioning that produce
 voltages in the expected ranges above.
 
+## Mathematical model and firmware flow
+
+The equations below describe the implementation in
+`Core/Src/waveform_gen.c`; sensor scaling and peripheral scheduling are in
+`Core/Src/main.c`.
+
+### Sensor inputs and adaptive parameters
+
+For the 12-bit ADC readings $A_0$ and $A_1$, the firmware uses:
+
+$$
+u = \operatorname{clamp}\left(\frac{A_0}{4095}, 0, 1\right),
+\qquad
+d = 200\,\frac{A_1}{4095}\ \text{m}.
+$$
+
+Here $u$ is the normalized turbidity input and $d$ is the estimated depth. The
+depth-normalized and absorption terms are:
+
+$$
+d_n = \operatorname{clamp}\left(\frac{d}{200}, 0, 1\right),
+\qquad
+\alpha(f) =
+\frac{0.11 f^2}{1+f^2}
++ \frac{44 f^2}{4100+f^2}
++ 2.75\times10^{-4} f^2 + 0.003
+\quad \text{dB/km},
+$$
+
+where $f$ is in kHz. The firmware evaluates Thorp absorption at 500 kHz and
+uses depth as an estimated one-way range:
+
+$$
+L = \alpha(500)\,\frac{\operatorname{clamp}(d,1,200)}{1000},
+\qquad
+a = \operatorname{clamp}\left(\frac{L}{20},0,1\right),
+$$
+
+where $L$ is estimated loss in dB and $a$ is the normalized absorption
+difficulty. The combined difficulty and waveform parameters are:
+
+$$
+D = \operatorname{clamp}(0.35u + 0.15d_n + 0.50a, 0, 1),
+\qquad
+f_c = 500\text{ kHz} - D(400\text{ kHz}),
+$$
+
+$$
+B = 0.2 f_c,\qquad f_0=f_c-\frac{B}{2},\qquad f_1=f_c+\frac{B}{2},
+$$
+
+$$
+T = 0.5\text{ ms} + D(4.5\text{ ms}),
+\qquad
+A = 0.2 + 0.8D.
+$$
+
+The 20 dB normalization bound and depth-as-range assumption are placeholders,
+not measured link-budget parameters.
+
+The same conversion and update path appears in the main loop's ADC task:
+
+```c
+float turbidity = (float)turb_raw / 4095.0f;
+float depth_m = ((float)depth_raw / 4095.0f) * 200.0f;
+
+sonar_params_t p = sonar_adaptive_params(turbidity, depth_m);
+g_current_params = p;
+g_params_dirty = 1;
+```
+
+### Pulse equations and DAC encoding
+
+All three pulses use a Hamming envelope $w_i$ over $N$ samples:
+
+$$
+w_i = 0.54 - 0.46\cos\left(\frac{2\pi i}{N-1}\right),
+\qquad 0\le i<N.
+$$
+
+For an LFM chirp, the frequency changes linearly from $f_0$ to $f_1$ over
+duration $T$. With $k=(f_1-f_0)/T$:
+
+$$
+\phi_{\mathrm{LFM}}(t)=2\pi\left(f_0t+\frac{k t^2}{2}\right),
+\qquad
+s(t)=A\,w(t)\sin\bigl(\phi_{\mathrm{LFM}}(t)\bigr).
+$$
+
+For the geometric (logarithmic) sweep, $r=f_1/f_0$ and instantaneous frequency
+is $f(t)=f_0r^{t/T}$. Integrating frequency gives the phase used by the code:
+
+$$
+\phi_{\mathrm{geo}}(t)=
+2\pi f_0T\,\frac{r^{t/T}-1}{\ln r},
+\qquad
+s(t)=A\,w(t)\sin\bigl(\phi_{\mathrm{geo}}(t)\bigr).
+$$
+
+The factor $T$ is required by the phase integral. For the Barker-7 pulse, the
+carrier is $f_c=(f_0+f_1)/2$ and the chip sequence is
+$[+1,+1,+1,-1,-1,+1,-1]$:
+
+$$
+s_i=A\,w_i\,c_i\sin(2\pi f_ct_i),
+\qquad t_i=\frac{i}{f_s}.
+$$
+
+For an ideal length-$N$ Barker code, the peak sidelobe amplitude is $1/N$ of
+the main peak. Barker-7 therefore has an ideal peak-sidelobe suppression
+magnitude of
+
+$$
+20\log_{10}(N)=20\log_{10}(7)\approx16.9\text{ dB}.
+$$
+
+This is a code property, not a measured performance claim for the hardware,
+transducer, or acoustic channel.
+
+The sample is centered and quantized for the unsigned 12-bit DAC. The buffer
+tail is filled with midscale (silence):
+
+$$
+\mathrm{DAC}_i = \operatorname{clamp}\left[
+\left(\frac{s_i}{2}+\frac{1}{2}\right)4095,\,0,\,4095\right],
+\qquad \mathrm{DAC}_{i\ge N}=2048.
+$$
+
+For the 180 MHz system clock, the APB1 timer clock is 90 MHz. TIM6 uses
+prescaler 0 and period 89, so the DAC sample rate is:
+
+$$
+f_s=\frac{90\text{ MHz}}{(0+1)(89+1)}=1\text{ MHz}.
+$$
+
+The lookup-table dispatcher selects the generator from the current modulation
+mode; DMA half/full callbacks refill the corresponding buffer half when
+parameters change:
+
+```c
+uint32_t written = sonar_fill_waveform(
+	dac_buffer, HALF_BUF_SAMPLES, &g_current_params,
+	g_sample_rate_hz, WINDOW_HAMMING, g_current_mode);
+```
+
+TIM7 runs at 20 Hz and requests an ADC refresh by setting a flag. The main loop
+performs the two ADC conversions, adapts the waveform, and requests an OLED
+refresh; display writes are rate-limited to 50 ms. The PC13 interrupt advances
+the modulation mode.
+
 ## Build and flash
 
 1. Install STM32CubeIDE with the STM32F4 firmware package this project targets
@@ -140,6 +298,7 @@ Core/
 Drivers/               STM32F4 HAL and CMSIS dependencies
 tests/                 Host-side waveform generator test
 assets/                Predicted waveform plot and spectrum captures
+assets/matsya.png       Team Matsya logo
 sonar_test.ioc          STM32CubeMX peripheral and pin configuration
 STM32F446RETX_FLASH.ld  Linker script (Flash)
 STM32F446RETX_RAM.ld    Linker script (RAM)
@@ -164,3 +323,17 @@ STM32F446RETX_RAM.ld    Linker script (RAM)
 - **No transducer driver stage is included.** PA4's DAC output needs suitable
 	external buffering, filtering, and amplification before driving a
 	transducer.
+
+## References
+
+1. STMicroelectronics, [How to use DAC for audio and waveform generation on STM32 MCUs and MPUs](https://cgit.pinealservo.com/BluePill_Rust/resources/raw/commit/c49f0c9fe83484570a9c03ebb85176b403aa46c/STM32%20Manuals/STM32_Audio_DAC_AppNote.pdf).
+2. [On the Relationship between Transmission Power and Capacity of Underwater Acoustic Communication Channel](https://arxiv.org/pdf/0801.0426).
+3. Ahmed et al., [Monostatic Sonar Performance Using Pulse Compression Waveforms](https://arl.nus.edu.sg/wp-content/publications/Ahmed2018Oceans.pdf), IEEE OCEANS (via ARL/NUS).
+4. ScienceDirect Topics, [Side Scan Sonar: An Overview](https://www.sciencedirect.com/topics/engineering/side-scan-sonar).
+5. [Enhanced target detection using a new cognitive sonar waveform design in shallow water](https://www.sciencedirect.com/science/article/abs/pii/S0003682X23000683), Applied Acoustics.
+6. W. H. Thorp, "Analytic description of the low-frequency attenuation coefficient," *The Journal of the Acoustical Society of America*, vol. 42, no. 1, p. 270, 1967. https://doi.org/10.1121/1.1910566.
+
+References 1-5 provide implementation background for STM32 DAC output,
+underwater acoustic channels, pulse compression, and sonar waveforms. The
+adaptive constants and placeholder link-budget assumptions in this firmware
+are project choices, not values validated by those references.
