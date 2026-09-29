@@ -119,7 +119,7 @@ The equations below describe the implementation in
 For the 12-bit ADC readings $A_0$ and $A_1$, the firmware uses:
 
 $$
-u = \operatorname{clamp}\left(\frac{A_0}{4095}, 0, 1\right),
+u = \min\left(1,\max\left(0,\frac{A_0}{4095}\right)\right),
 \qquad
 d = 200\,\frac{A_1}{4095}\ \text{m}.
 $$
@@ -128,7 +128,7 @@ Here $u$ is the normalized turbidity input and $d$ is the estimated depth. The
 depth-normalized and absorption terms are:
 
 $$
-d_n = \operatorname{clamp}\left(\frac{d}{200}, 0, 1\right),
+d_n = \min\left(1,\max\left(0,\frac{d}{200}\right)\right),
 \qquad
 \alpha(f) =
 \frac{0.11 f^2}{1+f^2}
@@ -141,16 +141,16 @@ where $f$ is in kHz. The firmware evaluates Thorp absorption at 500 kHz and
 uses depth as an estimated one-way range:
 
 $$
-L = \alpha(500)\,\frac{\operatorname{clamp}(d,1,200)}{1000},
+L = \alpha(500)\,\frac{\min\left(200,\max(1,d)\right)}{1000},
 \qquad
-a = \operatorname{clamp}\left(\frac{L}{20},0,1\right),
+a = \min\left(1,\max\left(0,\frac{L}{20}\right)\right),
 $$
 
 where $L$ is estimated loss in dB and $a$ is the normalized absorption
 difficulty. The combined difficulty and waveform parameters are:
 
 $$
-D = \operatorname{clamp}(0.35u + 0.15d_n + 0.50a, 0, 1),
+D = \min\left(1,\max\left(0,0.35u + 0.15d_n + 0.50a\right)\right),
 \qquad
 f_c = 500\text{ kHz} - D(400\text{ kHz}),
 $$
@@ -231,8 +231,8 @@ The sample is centered and quantized for the unsigned 12-bit DAC. The buffer
 tail is filled with midscale (silence):
 
 $$
-\mathrm{DAC}_i = \operatorname{clamp}\left[
-\left(\frac{s_i}{2}+\frac{1}{2}\right)4095,\,0,\,4095\right],
+\mathrm{DAC}_i = \min\left(4095,\max\left(0,
+\left(\frac{s_i}{2}+\frac{1}{2}\right)4095\right)\right),
 \qquad \mathrm{DAC}_{i\ge N}=2048.
 $$
 
