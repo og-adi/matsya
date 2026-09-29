@@ -36,17 +36,19 @@ phase equations for all three modulation types:
 
 ![Predicted waveform shapes - time and frequency domain](assets/predicted_waveforms.png)
 
-### Captured spectrum (oscilloscope and spectrum analyzer FFT)
+### Hardware captures
 
-Spectrum captures of the DAC output through the analog conditioning stage, one
-trace per modulation type:
+Oscilloscope time-domain traces and spectrum-analyzer captures of the DAC
+output, grouped by modulation type:
 
-| LFM chirp | Geometric sweep | Barker-7 |
-|:---:|:---:|:---:|
-| ![LFM spectrum capture](assets/spectrum_lfm.png) | ![Geometric sweep spectrum capture](assets/spectrum_geometric.png) | ![Barker-7 spectrum capture](assets/spectrum_barker7.png) |
+| Waveform | Oscilloscope | Spectrum analyzer |
+| --- |:---:|:---:|
+| LFM chirp | ![LFM oscilloscope capture](assets/oscilloscope_lfm.jpeg) | ![LFM spectrum-analyzer capture](assets/spectrum_lfm.jpeg) |
+| Geometric sweep | ![Geometric sweep oscilloscope capture](assets/oscilloscope_geometric.jpeg) | ![Geometric sweep spectrum-analyzer capture](assets/spectrum_geometric.jpeg) |
+| Barker-7 | ![Barker-7 oscilloscope capture](assets/oscilloscope_barker7.jpeg) | ![Barker-7 spectrum-analyzer capture](assets/spectrum_barker7.jpeg) |
 
-Add oscilloscope time-domain traces and a photo of the OLED as the project
-evolves; `assets/` keeps project images together with these plots.
+Add a photo of the OLED status display as the project evolves; `assets/`
+keeps project images together with these captures and the predicted plot.
 
 ---
 
