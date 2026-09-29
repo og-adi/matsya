@@ -1,0 +1,2 @@
+../Core/Src/waveform_gen.c:34:16:sonar_adaptive_params	0	static
+../Core/Src/waveform_gen.c:76:10:sonar_fill_lfm_lut	96	static

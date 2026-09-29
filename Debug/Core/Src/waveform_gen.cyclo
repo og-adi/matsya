@@ -1,0 +1,8 @@
+../Core/Src/waveform_gen.c:49:14:clampf	3
+../Core/Src/waveform_gen.c:59:14:thorp_absorption_db_per_km	1
+../Core/Src/waveform_gen.c:68:16:sonar_adaptive_params	1
+../Core/Src/waveform_gen.c:109:14:window_coeff	6
+../Core/Src/waveform_gen.c:127:10:sonar_fill_lfm_lut	7
+../Core/Src/waveform_gen.c:160:10:sonar_fill_geometric_lut	8
+../Core/Src/waveform_gen.c:212:10:sonar_fill_phase_coded_lut	11
+../Core/Src/waveform_gen.c:260:10:sonar_fill_waveform	3

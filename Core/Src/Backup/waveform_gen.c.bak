@@ -1,0 +1,101 @@
+/*
+ * waveform_gen.c
+ * ---------------------------------------------------------------------------
+ * Implementation. Uses only math.h -- no HAL. Build a quick host test with:
+ *
+ *   gcc -O2 -Wall -o test_wavegen waveform_gen.c test_wavegen.c -lm
+ *   ./test_wavegen
+ *
+ * before ever flashing this to a part. Once the LUT values match
+ * firmware_lut_export.csv from the Python sim (within rounding), port is safe.
+ */
+
+#include "waveform_gen.h"
+#include <math.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+static const float F_LOW_HZ    = 100000.0f;
+static const float F_HIGH_HZ   = 500000.0f;
+static const float DUR_MIN_S   = 0.5e-3f;
+static const float DUR_MAX_S   = 5.0e-3f;
+static const float AMP_MIN     = 0.2f;
+static const float AMP_MAX     = 1.0f;
+static const float MAX_DEPTH_M = 200.0f;
+
+static float clampf(float v, float lo, float hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+sonar_params_t sonar_adaptive_params(float turbidity, float depth_m)
+{
+    sonar_params_t p;
+
+    turbidity = clampf(turbidity, 0.0f, 1.0f);
+    float depth_norm = clampf(depth_m / MAX_DEPTH_M, 0.0f, 1.0f);
+    float difficulty = clampf(0.6f * turbidity + 0.4f * depth_norm, 0.0f, 1.0f);
+
+    float f_center = F_HIGH_HZ - difficulty * (F_HIGH_HZ - F_LOW_HZ);
+    float bw = 0.2f * f_center;
+
+    p.f_start_hz = f_center - bw / 2.0f;
+    p.f_end_hz   = f_center + bw / 2.0f;
+    p.duration_s = DUR_MIN_S + difficulty * (DUR_MAX_S - DUR_MIN_S);
+    p.amplitude  = AMP_MIN + difficulty * (AMP_MAX - AMP_MIN);
+    p.difficulty = difficulty;
+
+    return p;
+}
+
+/* Precomputed-coefficient window function -- evaluated once per sample at
+ * LUT-fill time (which runs at low priority, NOT in the ISR), so a cosf()
+ * call here is fine. What you must never do is call this per-sample inside
+ * the DMA-refill ISR. */
+static float window_coeff(window_type_t w, uint32_t i, uint32_t n)
+{
+    if (n <= 1) return 1.0f;
+    float x = (float)i / (float)(n - 1);
+    switch (w) {
+        case WINDOW_HAMMING:
+            return 0.54f - 0.46f * cosf(2.0f * (float)M_PI * x);
+        case WINDOW_HANN:
+            return 0.5f * (1.0f - cosf(2.0f * (float)M_PI * x));
+        case WINDOW_BLACKMAN:
+            return 0.42f - 0.5f * cosf(2.0f * (float)M_PI * x)
+                         + 0.08f * cosf(4.0f * (float)M_PI * x);
+        case WINDOW_RECT:
+        default:
+            return 1.0f;
+    }
+}
+
+uint32_t sonar_fill_lfm_lut(uint16_t *out, uint32_t max_samples,
+                             const sonar_params_t *params,
+                             float sample_rate_hz,
+                             window_type_t window)
+{
+    uint32_t n = (uint32_t)(params->duration_s * sample_rate_hz);
+    if (n > max_samples) n = max_samples;
+    if (n > SONAR_LUT_MAX_SAMPLES) n = SONAR_LUT_MAX_SAMPLES;
+
+    float k = (params->f_end_hz - params->f_start_hz) / params->duration_s; /* chirp rate, Hz/s */
+
+    for (uint32_t i = 0; i < n; i++) {
+        float t = (float)i / sample_rate_hz;
+        /* instantaneous phase for a linear chirp: 2*pi*(f0*t + k*t^2/2) */
+        float phase = 2.0f * (float)M_PI * (params->f_start_hz * t + 0.5f * k * t * t);
+        float s = sinf(phase) * window_coeff(window, i, n) * params->amplitude;
+
+        /* map [-1, 1] -> [0, 4095], centered at 2048 */
+        int32_t counts = (int32_t)((s * 0.5f + 0.5f) * DAC_FULL_SCALE);
+        if (counts < 0) counts = 0;
+        if (counts > (int32_t)DAC_FULL_SCALE) counts = DAC_FULL_SCALE;
+
+        out[i] = (uint16_t)counts;
+    }
+    return n;
+}
